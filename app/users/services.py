@@ -1,7 +1,7 @@
 # app/users/services.py
 from typing import Optional
 
-from app.repositories.user import UserRepository
+from app.users.repositories import UserRepository
 from app.users.models import User
 from app.users.schemas import UserResponse
 from app.auth.security import SecurityService

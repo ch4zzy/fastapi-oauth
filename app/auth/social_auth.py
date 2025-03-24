@@ -1,13 +1,13 @@
 # app/auth/social_auth.py
 from abc import ABC, abstractmethod
-from typing import Dict
+
 import httpx
-from fastapi import HTTPException, Depends
-from app.core.dependencies import get_user_service
-from app.repositories.user import UserRepository
-from app.users.models import User
 from authlib.integrations.starlette_client import OAuth
+from fastapi import HTTPException
+
 from app.core.config import settings
+from app.users.models import User
+from app.users.repositories import UserRepository
 
 
 class SocialAuth(ABC):
@@ -15,21 +15,40 @@ class SocialAuth(ABC):
         self.oauth = oauth
         self.user_service = user_service
         self.provider_name = self.__class__.__name__.replace('Auth', '').lower()
+        self._access_token_url = None
 
     @property
     def client(self):
-        """Get the OAuth client for this provider"""
-        return getattr(self.oauth, self.provider_name)
+        return getattr(self.oauth, self.provider_name, None)
 
     @abstractmethod
     async def configure_oauth(self):
-        """Configure OAuth client for specific provider"""
         pass
 
     @abstractmethod
-    async def get_user_info(self, token: dict) -> Dict:
-        """Get user information from provider"""
+    async def get_user_info(self, token: dict) -> dict:
         pass
+
+    async def get_token(self, code: str, redirect_uri: str) -> dict:
+        if not self._access_token_url:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Access token URL not configured for {self.provider_name}"
+            )
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                self._access_token_url,
+                data={
+                    "code": code,
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code"
+                }
+            )
+            response.raise_for_status()
+            return response.json()
 
     async def authenticate_user(self, token: dict) -> User:
         user_info = await self.get_user_info(token)
@@ -38,47 +57,16 @@ class SocialAuth(ABC):
             raise HTTPException(status_code=400, detail="Email not found in provider response")
 
         user = await self.user_service.get_by_email(email)
-        #if not user:
-            #user = await self.user_service.create({
-                #'email': email,
-                #'name': user_info.get('name'),
-                #'social_id': user_info.get('sub') or user_info.get('id')
-            #})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
         return user
-
-
-class GoogleAuth(SocialAuth):
-    async def configure_oauth(self):
-        self.oauth.register(
-            name='google',
-            client_id=settings.GOOGLE_CLIENT_ID,
-            client_secret=settings.GOOGLE_CLIENT_SECRET,
-            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-            client_kwargs={'scope': 'openid profile email'},
-            authorize_state=settings.SECRET_KEY
-        )
-
-    async def get_user_info(self, token: dict) -> Dict:
-        access_token = token.get("access_token")
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No access_token in token response")
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://www.googleapis.com/oauth2/v3/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"}
-            )
-            response.raise_for_status()
-            return response.json()
 
 
 class SocialAuthFactory:
     @staticmethod
-    async def get_social_auth(
-            provider: str,
-            oauth: OAuth = Depends(),
-            user_service: UserRepository = Depends(get_user_service)
-    ) -> SocialAuth:
+    async def get_social_auth(provider: str, oauth: OAuth, user_service: UserRepository) -> SocialAuth:
+        from app.auth.providers.google import GoogleAuth
+
         providers = {
             'google': GoogleAuth,
         }

@@ -1,9 +1,9 @@
-# app/auth/services.py
 import secrets
 from typing import Dict
 
 from fastapi import HTTPException, Request
 from fastapi.security import HTTPBasicCredentials
+from fastapi.responses import RedirectResponse
 
 from app.auth.security import SecurityService
 from app.auth.social_auth import SocialAuthFactory
@@ -20,7 +20,8 @@ class AuthService:
         email = SecurityService.decode_token(token)
         user = await self.user_service.get_by_email(email)
         if not user:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            # Создаем пользователя, если его нет (по best practices для соцсетей)
+            user = await self.user_service.create({"email": email})
         return user
 
     async def authenticate_basic(self, credentials: HTTPBasicCredentials) -> User:
@@ -50,7 +51,7 @@ class SocialAuthService:
         request.session[f"oauth_state_{self.provider}"] = state
         return {"url": auth_url_data["url"]}
 
-    async def handle_callback(self, request: Request) -> Dict:
+    async def handle_callback(self, request: Request) -> RedirectResponse:
         session_state = request.session.get(f"oauth_state_{self.provider}")
         query_state = request.query_params.get("state")
 
@@ -66,5 +67,7 @@ class SocialAuthService:
         )
         user = await self.auth_service.authenticate_user(token)
         access_token = SecurityService.create_access_token(data={"sub": user.email})
+
+        request.session["access_token"] = access_token
         request.session.pop(f"oauth_state_{self.provider}", None)
-        return {"access_token": access_token, "token_type": "Bearer"}
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/profile")

@@ -1,6 +1,6 @@
-# app/auth/routers.py
 from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBasicCredentials
+from fastapi.responses import JSONResponse
 
 from app.auth.dependencies import security, get_auth_service, get_social_auth_service
 from app.auth.forms import OAuth2EmailRequestForm
@@ -48,3 +48,19 @@ async def social_callback(
         social_auth: SocialAuthService = Depends(get_social_auth_service)
 ):
     return await social_auth.handle_callback(request)
+
+
+@router.get("/token")
+async def get_token(request: Request):
+    access_token = request.session.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="No token available")
+    response = JSONResponse(content={"access_token": access_token, "token_type": "Bearer"})
+    response.headers["X-Access-Token"] = access_token
+    return response
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    request.session.pop("access_token", None)
+    return {"message": "Logged out successfully"}

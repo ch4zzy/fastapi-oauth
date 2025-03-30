@@ -19,9 +19,8 @@ class AuthService:
     async def authenticate_user(self, token: str) -> User:
         email = SecurityService.decode_token(token)
         user = await self.user_service.get_by_email(email)
-        if not user:
-            # Создаем пользователя, если его нет (по best practices для соцсетей)
-            user = await self.user_service.create({"email": email})
+        #if not user:
+            #user = await self.user_service.create({"email": email})
         return user
 
     async def authenticate_basic(self, credentials: HTTPBasicCredentials) -> User:
